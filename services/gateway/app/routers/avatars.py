@@ -18,6 +18,13 @@ router = APIRouter(prefix="/api/v1/avatars", tags=["avatars"],
 KIND_EXT = {"base_video": "mp4", "still_portrait": "png"}
 
 
+@router.get("")
+async def list_avatars(session: AsyncSession = Depends(get_session)):
+    from sqlalchemy import select
+    rows = (await session.execute(select(Avatar).order_by(Avatar.created_at.desc()))).scalars()
+    return [{"avatar_id": a.id, "name": a.name, "kind": a.kind} for a in rows]
+
+
 @router.post("", status_code=201)
 async def register_avatar(
     name: str = Form(...),

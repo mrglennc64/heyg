@@ -1,194 +1,96 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import CanvasStage from "@/components/CanvasStage";
-import { generateVideo, getApiKey, jobStatus, setApiKey } from "@/lib/api";
-import { newScene, type JobStatus, type Scene, type VideoRequest } from "@/lib/types";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import Shell from "@/components/Shell";
+import { listProjects, saveProject, type StoredProject } from "@/lib/projects";
+import { newScene } from "@/lib/types";
 
-export default function Studio() {
-  const [title, setTitle] = useState("untitled");
-  const [scenes, setScenes] = useState<Scene[]>([newScene()]);
-  const [active, setActive] = useState(0);
-  const [apiKey, setKey] = useState("");
-  const [job, setJob] = useState<JobStatus | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+const CREATE_CARDS = [
+  { emoji: "🧑‍💻", title: "Avatar video", desc: "Script → talking-head video", href: "/editor" },
+  { emoji: "🌍", title: "Translate video", desc: "Re-dub a project in 17 languages", href: "/editor?mode=translate" },
+  { emoji: "🖼️", title: "Photo avatar", desc: "Animate a single portrait", href: "/avatars" },
+  { emoji: "🎙️", title: "Clone a voice", desc: "30 s sample → your voice, any language", href: "/voices" },
+];
 
-  useEffect(() => setKey(getApiKey()), []);
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+const THUMB_COLORS = ["#6440fb", "#0ea5e9", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
 
-  const scene = scenes[active];
-  const patch = (updater: (s: Scene) => Scene) =>
-    setScenes((prev) => prev.map((s, i) => (i === active ? updater(structuredClone(s)) : s)));
+export default function Home() {
+  const router = useRouter();
+  const [projects, setProjects] = useState<StoredProject[]>([]);
+  const [prompt, setPrompt] = useState("");
+  const [greeting, setGreeting] = useState("Welcome back");
 
-  const render = async (testMode: boolean) => {
-    setError(null);
-    setSubmitting(true);
-    const req: VideoRequest = {
-      title,
-      dimension: { width: 1920, height: 1080 },
-      fps: 25,
-      scenes,
-      test_mode: testMode,
-    };
-    try {
-      const { job_id } = await generateVideo(req);
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(async () => {
-        try {
-          const s = await jobStatus(job_id);
-          setJob(s);
-          if (s.status === "completed" || s.status === "failed") {
-            if (pollRef.current) clearInterval(pollRef.current);
-          }
-        } catch { /* transient poll error — keep trying */ }
-      }, 4000);
-      setJob({ job_id, status: "queued", progress: 0 });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSubmitting(false);
-    }
+  useEffect(() => {
+    setProjects(listProjects());
+    const h = new Date().getHours();
+    setGreeting(h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening");
+  }, []);
+
+  const startFromPrompt = () => {
+    const scene = newScene();
+    scene.voice.input_text = prompt;
+    const id = Math.random().toString(36).slice(2, 10);
+    saveProject({
+      id,
+      title: prompt.slice(0, 48) || "untitled",
+      updated_at: new Date().toISOString(),
+      request: {
+        title: prompt.slice(0, 48) || "untitled",
+        dimension: { width: 1920, height: 1080 },
+        fps: 25, scenes: [scene], test_mode: true,
+      },
+    });
+    router.push(`/editor?project=${id}`);
   };
 
   return (
-    <div className="studio">
-      {/* ── left: scene list ── */}
-      <div className="col">
-        <h1>AVATARFORGE STUDIO</h1>
-        <label>Project title</label>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+    <Shell>
+      <div className="hero">
+        <h1>{greeting}, Glenn 👋</h1>
+        <p>Turn a script into an avatar video — your face, your voice, any language.</p>
+        <div className="prompt">
+          <input
+            placeholder="What will your video say today?"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && startFromPrompt()}
+          />
+          <button onClick={startFromPrompt}>Create video →</button>
+        </div>
+      </div>
 
-        <h2>Scenes</h2>
-        {scenes.map((s, i) => (
-          <div key={s.scene_id}
-               className={`scene-item ${i === active ? "active" : ""}`}
-               onClick={() => setActive(i)}>
-            Scene {i + 1}
-            <small>{s.voice.input_text.slice(0, 42) || "(no script)"} · {s.voice.language}</small>
+      <h2>Create</h2>
+      <div className="cards">
+        {CREATE_CARDS.map((c) => (
+          <div key={c.title} className="card" onClick={() => router.push(c.href)}>
+            <span className="emoji">{c.emoji}</span>
+            <b>{c.title}</b>
+            <small>{c.desc}</small>
           </div>
         ))}
-        <div className="row">
-          <button className="secondary"
-                  onClick={() => { setScenes([...scenes, newScene()]); setActive(scenes.length); }}>
-            + Add scene
-          </button>
-          <button className="secondary" disabled={scenes.length < 2}
-                  onClick={() => { setScenes(scenes.filter((_, i) => i !== active)); setActive(0); }}>
-            Delete
-          </button>
-        </div>
-
-        <h2>Connection</h2>
-        <label>API key</label>
-        <input type="password" value={apiKey}
-               onChange={(e) => { setKey(e.target.value); setApiKey(e.target.value); }} />
       </div>
 
-      {/* ── center: canvas + render ── */}
-      <div className="col stage-wrap">
-        <CanvasStage
-          scene={scene}
-          onPosition={(x, y) => patch((s) => { s.avatar.position = { x, y }; return s; })}
-        />
-        <div className="row" style={{ width: "100%", maxWidth: 860 }}>
-          <button onClick={() => render(true)} disabled={submitting}>
-            {submitting ? "Submitting…" : "Preview (540p test)"}
-          </button>
-          <button className="secondary" onClick={() => render(false)} disabled={submitting}>
-            Render final 1080p
-          </button>
+      <h2>Recent projects</h2>
+      {projects.length === 0 ? (
+        <div className="empty">No projects yet — create your first video above.</div>
+      ) : (
+        <div className="projects">
+          {projects.slice(0, 8).map((p, i) => (
+            <div key={p.id} className="project" onClick={() => router.push(`/editor?project=${p.id}`)}>
+              <div className="thumb" style={{ background: THUMB_COLORS[i % THUMB_COLORS.length] }}>
+                {p.title.slice(0, 1).toUpperCase()}
+              </div>
+              <div className="meta">
+                <b>{p.title}</b>
+                <small>
+                  {p.request.scenes.length} scene{p.request.scenes.length > 1 ? "s" : ""} ·{" "}
+                  {new Date(p.updated_at).toLocaleDateString()}
+                </small>
+              </div>
+            </div>
+          ))}
         </div>
-
-        {error && <div className="status failed">⚠ {error}</div>}
-        {job && (
-          <div className={`status ${job.status}`}>
-            <b>job {job.job_id}</b> — {job.status}
-            {job.status === "completed" && job.video_url && (
-              <> · <a href={job.video_url} target="_blank">download MP4</a></>
-            )}
-            {job.status === "failed" && <> · {job.error}</>}
-            <div className="bar"><div style={{ width: `${job.progress * 100}%` }} /></div>
-          </div>
-        )}
-      </div>
-
-      {/* ── right: scene properties ── */}
-      <div className="col">
-        <h2>Script</h2>
-        <textarea
-          placeholder="Write for the ear — short sentences. ~150 words ≈ 1 min."
-          value={scene.voice.input_text}
-          onChange={(e) => patch((s) => { s.voice.input_text = e.target.value; return s; })}
-        />
-
-        <h2>Avatar</h2>
-        <label>Avatar ID</label>
-        <input value={scene.avatar.avatar_id}
-               onChange={(e) => patch((s) => { s.avatar.avatar_id = e.target.value; return s; })} />
-        <label>Scale ({scene.avatar.scale.toFixed(2)})</label>
-        <input type="range" min={0.2} max={1.6} step={0.05} value={scene.avatar.scale}
-               onChange={(e) => patch((s) => { s.avatar.scale = Number(e.target.value); return s; })} />
-        <label>Matting</label>
-        <select value={scene.avatar.matting}
-                onChange={(e) => patch((s) => { s.avatar.matting = e.target.value as Scene["avatar"]["matting"]; return s; })}>
-          <option value="none">none</option>
-          <option value="greenscreen">greenscreen key</option>
-        </select>
-
-        <h2>Voice</h2>
-        <label>Voice ID</label>
-        <input value={scene.voice.voice_id}
-               onChange={(e) => patch((s) => { s.voice.voice_id = e.target.value; return s; })} />
-        <div className="row">
-          <div>
-            <label>Language</label>
-            <select value={scene.voice.language}
-                    onChange={(e) => patch((s) => { s.voice.language = e.target.value; return s; })}>
-              {["en","es","fr","de","it","pt","pl","tr","ru","nl","cs","ar","zh","ja","hu","ko","hi"]
-                .map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
-          </div>
-          <div>
-            <label>Emotion</label>
-            <select value={scene.voice.emotion}
-                    onChange={(e) => patch((s) => { s.voice.emotion = e.target.value as Scene["voice"]["emotion"]; return s; })}>
-              {["neutral","friendly","serious","excited","sad"]
-                .map((em) => <option key={em} value={em}>{em}</option>)}
-            </select>
-          </div>
-        </div>
-        <label>Speed ({scene.voice.speed.toFixed(2)}×)</label>
-        <input type="range" min={0.5} max={2} step={0.05} value={scene.voice.speed}
-               onChange={(e) => patch((s) => { s.voice.speed = Number(e.target.value); return s; })} />
-        <label>Pitch ({scene.voice.pitch_semitones} st)</label>
-        <input type="range" min={-6} max={6} step={0.5} value={scene.voice.pitch_semitones}
-               onChange={(e) => patch((s) => { s.voice.pitch_semitones = Number(e.target.value); return s; })} />
-
-        <h2>Background</h2>
-        <div className="row">
-          <div>
-            <label>Type</label>
-            <select value={scene.background.type}
-                    onChange={(e) => patch((s) => { s.background.type = e.target.value as Scene["background"]["type"]; return s; })}>
-              <option value="color">color</option>
-              <option value="image">image</option>
-              <option value="video">video</option>
-            </select>
-          </div>
-          <div>
-            <label>{scene.background.type === "color" ? "Hex" : "S3 key / URL"}</label>
-            <input value={scene.background.value}
-                   onChange={(e) => patch((s) => { s.background.value = e.target.value; return s; })} />
-          </div>
-        </div>
-
-        <h2>Transition (into this scene)</h2>
-        <select value={scene.transition}
-                onChange={(e) => patch((s) => { s.transition = e.target.value as Scene["transition"]; return s; })}>
-          {["cut","fade","wipeleft","slideright"].map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-      </div>
-    </div>
+      )}
+    </Shell>
   );
 }

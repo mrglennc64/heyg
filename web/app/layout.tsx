@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AvatarForge Studio",
-  description: "Self-hosted avatar video canvas editor",
+  title: "AvatarForge",
+  description: "Self-hosted AI avatar video studio",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

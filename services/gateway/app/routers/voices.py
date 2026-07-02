@@ -20,6 +20,13 @@ MIN_BYTES = 30 * 48_000 * 2       # ≈ 30 s of 48 kHz 16-bit mono
 MAX_BYTES = 200 * 1024 * 1024
 
 
+@router.get("")
+async def list_voices(session: AsyncSession = Depends(get_session)):
+    from sqlalchemy import select
+    rows = (await session.execute(select(Voice).order_by(Voice.created_at.desc()))).scalars()
+    return [{"voice_id": v.id, "name": v.name} for v in rows]
+
+
 @router.post("", status_code=201)
 async def register_voice(
     name: str = Form(...),

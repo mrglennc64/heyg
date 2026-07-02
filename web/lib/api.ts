@@ -31,3 +31,22 @@ export const generateVideo = (req: VideoRequest) =>
   });
 
 export const jobStatus = (jobId: string) => call<JobStatus>(`/api/v1/jobs/${jobId}`);
+
+// ── asset registry ──────────────────────────────────────────
+export interface AvatarInfo { avatar_id: string; name: string; kind: string }
+export interface VoiceInfo { voice_id: string; name: string }
+
+export const listAvatars = () => call<AvatarInfo[]>("/api/v1/avatars");
+export const listVoices = () => call<VoiceInfo[]>("/api/v1/voices");
+
+export const registerAvatar = (name: string, kind: string, media: File) => {
+  const fd = new FormData();
+  fd.set("name", name); fd.set("kind", kind); fd.set("media", media);
+  return call<AvatarInfo>("/api/v1/avatars", { method: "POST", body: fd });
+};
+
+export const registerVoice = (name: string, sample: File, consent: File) => {
+  const fd = new FormData();
+  fd.set("name", name); fd.set("sample", sample); fd.set("consent", consent);
+  return call<VoiceInfo>("/api/v1/voices", { method: "POST", body: fd });
+};
