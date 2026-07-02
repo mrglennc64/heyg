@@ -1,0 +1,6 @@
+celery[redis]==5.4.*
+boto3==1.35.*
+pydantic==2.9.*
+pydantic-settings==2.6.*
+opencv-python-headless==4.10.*
+numpy<2

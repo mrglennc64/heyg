@@ -1,0 +1,54 @@
+{
+  "title": "Product launch — Spanish dub",
+  "dimension": { "width": 1920, "height": 1080 },
+  "fps": 25,
+  "test_mode": false,
+  "callback_url": "https://example.com/hooks/forge",
+  "scenes": [
+    {
+      "avatar": {
+        "avatar_id": "a1b2c3d4e5f6",
+        "mode": "base_video",
+        "scale": 0.9,
+        "position": { "x": 0.28, "y": 0.55 },
+        "matting": "greenscreen"
+      },
+      "voice": {
+        "voice_id": "f6e5d4c3b2a1",
+        "input_text": "Hola, soy tu presentadora digital. Hoy os enseño cómo funciona nuestra nueva plataforma.",
+        "language": "es",
+        "speed": 1.0,
+        "pitch_semitones": 0,
+        "emotion": "friendly"
+      },
+      "background": { "type": "image", "value": "assets/office_bg.png", "fit": "cover" },
+      "overlays": [
+        {
+          "type": "text",
+          "value": "AvatarForge — Demo",
+          "position": { "x": 0.78, "y": 0.08 },
+          "font_size": 56,
+          "start_sec": 0.5
+        }
+      ],
+      "transition": "cut",
+      "captions": true
+    },
+    {
+      "avatar": {
+        "avatar_id": "a1b2c3d4e5f6",
+        "mode": "base_video",
+        "scale": 1.0,
+        "position": { "x": 0.5, "y": 0.5 }
+      },
+      "voice": {
+        "voice_id": "f6e5d4c3b2a1",
+        "input_text": "Empecemos con la generación de vídeo a partir de texto.",
+        "language": "es",
+        "emotion": "excited"
+      },
+      "background": { "type": "color", "value": "#0b0f19" },
+      "transition": "fade"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+# coqui-tts is the maintained fork of the original Coqui TTS (XTTS v2)
+coqui-tts==0.24.*
+celery[redis]==5.4.*
+boto3==1.35.*
+pydantic==2.9.*
+pydantic-settings==2.6.*
+soundfile==0.12.*
+numpy<2
