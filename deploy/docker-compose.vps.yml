@@ -1,0 +1,24 @@
+# VPS variant for hosts where nginx already owns ports 80/443
+# (e.g. srv1786182). Web + demo API bind to localhost-only high ports;
+# an nginx vhost (deploy/nginx-heyg.conf) terminates TLS and proxies in.
+#
+#   docker compose -f deploy/docker-compose.vps.yml up -d --build
+name: avatarforge-prod
+
+services:
+  web:
+    build:
+      context: ../web
+      args:
+        NEXT_PUBLIC_API_BASE: https://heyg.usesmpt.com
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3000"
+
+  demo-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.demo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8100:8000"
