@@ -1,0 +1,43 @@
+# Production compose for a CPU-only VPS (heyg.usesmpt.com)
+#
+#   docker compose -f deploy/docker-compose.prod.yml up -d --build
+#
+# Runs: Caddy (auto-HTTPS) + Next.js studio + demo API.
+# Real GPU rendering stays on a GPU host (see README "GPU layout");
+# point API_UPSTREAM at it when attached.
+name: avatarforge-prod
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      API_UPSTREAM: ${API_UPSTREAM:-demo-api:8000}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [forge]
+
+  web:
+    build:
+      context: ../web
+      args:
+        NEXT_PUBLIC_API_BASE: https://heyg.usesmpt.com
+    restart: unless-stopped
+    networks: [forge]
+
+  demo-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.demo
+    restart: unless-stopped
+    networks: [forge]
+
+networks:
+  forge:
+
+volumes:
+  caddy-data:
+  caddy-config:

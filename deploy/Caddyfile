@@ -1,0 +1,23 @@
+# Reverse proxy + automatic HTTPS (Let's Encrypt) for heyg.usesmpt.com
+heyg.usesmpt.com {
+	encode gzip
+
+	# API routes → gateway (demo-api in CPU mode, gateway in GPU mode)
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:demo-api:8000}
+	}
+	handle /docs* {
+		reverse_proxy {$API_UPSTREAM:demo-api:8000}
+	}
+	handle /openapi.json {
+		reverse_proxy {$API_UPSTREAM:demo-api:8000}
+	}
+	handle /healthz {
+		reverse_proxy {$API_UPSTREAM:demo-api:8000}
+	}
+
+	# Everything else → Next.js studio
+	handle {
+		reverse_proxy web:3000
+	}
+}

@@ -1,0 +1,16 @@
+# Demo API — the mock gateway (tools/dev_server.py) in a container.
+# Full UI experience on a CPU-only VPS: real schema validation, simulated
+# job lifecycle. Swap for the real gateway when a GPU host is attached.
+FROM python:3.11-slim
+
+WORKDIR /app
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" pydantic pydantic-settings python-multipart
+
+COPY shared/ /opt/shared/
+RUN pip install --no-cache-dir -e /opt/shared
+
+COPY services/gateway/app /app/services/gateway/app
+COPY tools/dev_server.py /app/tools/dev_server.py
+
+EXPOSE 8000
+CMD ["python", "tools/dev_server.py", "8000"]
