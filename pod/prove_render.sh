@@ -15,12 +15,25 @@ mkdir -p "$WORK"; cd "$WORK"
 
 log(){ echo -e "\n=== $* ==="; }
 fail(){ echo "XX FAILED: $*"; exit 1; }
+UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 fetch(){ # fetch <dest> <url...> — try each url until one works
   local dest="$1"; shift
   [ -s "$dest" ] && { echo "  cached: $dest"; return 0; }
   for u in "$@"; do
     echo "  trying: $u"
-    if curl -fL --retry 3 -o "$dest" "$u" && [ -s "$dest" ]; then echo "  ok -> $dest"; return 0; fi
+    if curl -fL --retry 3 -A "$UA" -o "$dest" "$u" && [ -s "$dest" ]; then echo "  ok -> $dest"; return 0; fi
+  done
+  return 1
+}
+fetch_face(){ # download a REAL face image (validate it decodes as an image)
+  rm -f face.jpg
+  for u in "$@"; do
+    echo "  trying face: $u"
+    curl -fL --retry 3 -A "$UA" -o face.jpg "$u" 2>/dev/null || { rm -f face.jpg; continue; }
+    if python -c "import cv2,sys; sys.exit(0 if cv2.imread('face.jpg') is not None else 1)" 2>/dev/null; then
+      echo "  ok -> face.jpg ($(du -h face.jpg | cut -f1), valid image)"; return 0
+    fi
+    echo "  (not a valid image, trying next)"; rm -f face.jpg
   done
   return 1
 }
@@ -51,25 +64,28 @@ fetch face_detection/detection/sfd/s3fd.pth \
   "https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth" \
   || fail "could not fetch s3fd face detector — paste the log, I'll swap the URL"
 
-log "5. torch 2.x compat patch (weights_only default changed in torch>=2.4)"
-# Wav2Lip calls torch.load without weights_only; force it False everywhere.
+log "5. torch 2.x + librosa 0.10 compat patches"
+# 5a. torch.load weights_only default changed in torch>=2.4 -> force False
 grep -rl "torch.load" *.py face_detection 2>/dev/null | while read -r f; do
   sed -i 's/torch\.load(\([^)]*\))/torch.load(\1, weights_only=False)/g' "$f" 2>/dev/null || true
 done
-# double-load guard produces weights_only=False, weights_only=False — collapse it
 grep -rl "weights_only=False, weights_only=False" *.py face_detection 2>/dev/null | while read -r f; do
   sed -i 's/, weights_only=False, weights_only=False/, weights_only=False/g' "$f"
 done
+# 5b. librosa>=0.10 made sr/n_fft keyword-only in filters.mel()
+sed -i 's/librosa\.filters\.mel(hp\.sample_rate, hp\.n_fft,/librosa.filters.mel(sr=hp.sample_rate, n_fft=hp.n_fft,/' audio.py
+echo "  patched audio.py mel(): $(grep -c 'sr=hp.sample_rate' audio.py) call(s)"
 
 log "6. inputs: face image + spoken audio"
-fetch face.jpg \
-  "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2c/Rebecca_Ferguson_by_Gage_Skidmore.jpg/480px-Rebecca_Ferguson_by_Gage_Skidmore.jpg" \
-  "https://raw.githubusercontent.com/Rudrabha/Wav2Lip/master/evaluation/test_filelists/README.md" \
-  || fail "could not fetch a sample face image"
+fetch_face \
+  "https://thispersondoesnotexist.com/" \
+  "https://raw.githubusercontent.com/OpenTalker/SadTalker/main/examples/source_image/art_0.png" \
+  "https://raw.githubusercontent.com/OpenTalker/SadTalker/main/examples/source_image/full_body_1.png" \
+  || fail "could not fetch a valid face image — paste the log, I'll swap the URL"
 SCRIPT="Hi! This talking avatar was generated end to end on a self hosted GPU. Voice synthesis, then neural lip sync, all open source. It works."
 python -m edge_tts --voice en-US-JennyNeural --text "$SCRIPT" --write-media speech.mp3 2>&1 | tail -1
 ffmpeg -y -loglevel error -i speech.mp3 -ar 16000 -ac 1 speech.wav || fail "audio convert failed"
-echo "  audio: $(du -h speech.wav | cut -f1)"
+echo "  audio ready: $(du -h speech.wav | cut -f1)"
 
 log "7. RENDER (Wav2Lip inference on GPU)"
 python inference.py \
