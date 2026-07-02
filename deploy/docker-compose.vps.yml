@@ -13,7 +13,7 @@ services:
         NEXT_PUBLIC_API_BASE: https://heyg.usesmpt.com
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3100:3000"
+      - "127.0.0.1:${WEB_PORT:-3100}:3000"
 
   demo-api:
     build:
@@ -21,4 +21,4 @@ services:
       dockerfile: deploy/Dockerfile.demo
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8100:8000"
+      - "127.0.0.1:${API_PORT:-8100}:8000"
