@@ -3,5 +3,6 @@ data/
 __pycache__/
 *.pyc
 .venv/
+.venv-test/
 node_modules/
 .next/
