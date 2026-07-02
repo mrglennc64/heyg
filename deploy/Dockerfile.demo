@@ -3,6 +3,7 @@
 # job lifecycle. Swap for the real gateway when a GPU host is attached.
 FROM python:3.11-slim
 
+ENV PYTHONUNBUFFERED=1 BIND_HOST=0.0.0.0
 WORKDIR /app
 RUN pip install --no-cache-dir fastapi "uvicorn[standard]" pydantic pydantic-settings python-multipart
 

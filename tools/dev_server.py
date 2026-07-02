@@ -126,8 +126,10 @@ async def status(job_id: str, x_api_key: str | None = Header(None)):
 
 
 if __name__ == "__main__":
+    import os
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    host = os.environ.get("BIND_HOST", "127.0.0.1")  # 0.0.0.0 in containers
     print("-- AvatarForge DEV MOCK gateway --------------------------")
     print(f"   http://localhost:{port}  (docs at /docs)")
     print("   Real schema validation, simulated ~21 s job lifecycle.")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
