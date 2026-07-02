@@ -121,12 +121,17 @@ async def generate(req: dict, x_api_key: str | None = Header(None)):
     scenes = req.get("scenes") or []
     if not scenes:
         raise HTTPException(422, "no scenes")
-    s0 = scenes[0]
-    aid = s0["avatar"]["avatar_id"]
-    if aid not in AVATARS:
-        raise HTTPException(422, f"unknown avatar_id {aid} (register it first)")
-    text = s0["voice"]["input_text"]
-    lang = s0["voice"].get("language", "en")
+    s0 = scenes[0] or {}
+    avatar = s0.get("avatar") or {}
+    voice_obj = s0.get("voice") or {}
+    aid = avatar.get("avatar_id")
+    print(f"[generate] payload scene0 avatar={avatar} voice_keys={list(voice_obj)}", flush=True)
+    if not aid or aid not in AVATARS:
+        raise HTTPException(422, f"unknown or missing avatar_id {aid!r} (register it first)")
+    text = (voice_obj.get("input_text") or voice_obj.get("text") or "").strip()
+    if not text:
+        raise HTTPException(422, "script text is empty — type what the avatar should say")
+    lang = voice_obj.get("language") or "en"
     voice = VOICE_BY_LANG.get(lang, "en-US-JennyNeural")
 
     job_id = uuid.uuid4().hex[:16]
