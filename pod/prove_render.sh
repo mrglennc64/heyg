@@ -4,8 +4,9 @@
 # Minimal, reliable path:  edge-tts (speech)  →  Wav2Lip (GPU lip-sync)
 # Output: /workspace/proof/proof.mp4   (download via the Jupyter file browser)
 #
-# Run in the pod's Jupyter terminal:
-#   curl -fsSL https://raw.githubusercontent.com/mrglennc64/heyg/main/pod/prove_render.sh | bash 2>&1 | tee /workspace/proof.log
+# Run in the pod's web/Jupyter terminal (download-then-run so stdin-reading
+# tools like ffmpeg/python can't eat the piped script):
+#   curl -fsSL https://raw.githubusercontent.com/mrglennc64/heyg/main/pod/prove_render.sh -o /tmp/pr.sh && bash /tmp/pr.sh 2>&1 | tee /workspace/proof.log
 # Then paste me the last ~30 lines if anything fails.
 # ─────────────────────────────────────────────────────────────────────────
 set -uo pipefail
@@ -84,7 +85,7 @@ fetch_face \
   || fail "could not fetch a valid face image — paste the log, I'll swap the URL"
 SCRIPT="Hi! This talking avatar was generated end to end on a self hosted GPU. Voice synthesis, then neural lip sync, all open source. It works."
 python -m edge_tts --voice en-US-JennyNeural --text "$SCRIPT" --write-media speech.mp3 2>&1 | tail -1
-ffmpeg -y -loglevel error -i speech.mp3 -ar 16000 -ac 1 speech.wav || fail "audio convert failed"
+ffmpeg -nostdin -y -loglevel error -i speech.mp3 -ar 16000 -ac 1 speech.wav || fail "audio convert failed"
 echo "  audio ready: $(du -h speech.wav | cut -f1)"
 
 log "7. RENDER (Wav2Lip inference on GPU)"
