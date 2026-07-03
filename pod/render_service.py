@@ -47,6 +47,22 @@ MAX_CHUNK_CHARS = 280  # long-form stability: synthesize per sentence group
 _clone_model = None
 _clone_lock = threading.Lock()
 
+# Probed at startup in a background thread; find_spec alone lies when the
+# package is installed but its imports are broken (e.g. torch/torchvision
+# version skew — seen live 2026-07-03).
+CLONE_STATUS = {"engine": None}
+
+
+def _probe_clone_engine() -> None:
+    try:
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS  # noqa: F401
+        CLONE_STATUS["engine"] = "chatterbox"
+    except Exception as e:  # noqa: BLE001
+        CLONE_STATUS["engine"] = f"unavailable: {type(e).__name__}: {e}"[:200]
+
+
+threading.Thread(target=_probe_clone_engine, daemon=True).start()
+
 app = FastAPI(title="AvatarForge GPU render service")
 
 
@@ -88,14 +104,12 @@ def _synth_cloned(text: str, language: str, ref_path: Path, out_wav: Path) -> No
 
 @app.get("/health")
 def health():
-    import importlib.util
-
     import torch
     return {
         "ok": True,
         "cuda": torch.cuda.is_available(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-        "clone_engine": "chatterbox" if importlib.util.find_spec("chatterbox") else None,
+        "clone_engine": CLONE_STATUS["engine"],
     }
 
 

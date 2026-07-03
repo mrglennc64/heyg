@@ -14,7 +14,9 @@ echo "=== 1. service deps ==="
 pip install -q fastapi "uvicorn[standard]" python-multipart edge-tts 2>&1 | tail -1
 
 echo "=== 2. voice cloning engine (Chatterbox) ==="
-if pip install -q chatterbox-tts 2>&1 | tail -1; then
+# torchvision/transformers pinned to match chatterbox's torch==2.6 — without
+# them pip leaves the image's torchvision behind and the import breaks
+if pip install -q chatterbox-tts torchvision==0.21.0 transformers==4.46.3 2>&1 | tail -1; then
   # pre-download the multilingual weights so the first render doesn't eat
   # the request timeout (~4 GB from HuggingFace, cached in /workspace)
   export HF_HOME=/workspace/hf_cache
