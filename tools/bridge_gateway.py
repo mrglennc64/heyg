@@ -19,6 +19,7 @@ Env:
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import threading
 import uuid
@@ -173,6 +174,49 @@ def _run_render(job_id: str, avatar_path: str, text: str, voice: str,
             fh.close()
 
 
+def _run_tts(job_id: str, text: str, language: str, fmt: str, ref_path: str):
+    JOBS[job_id]["status"] = "rendering"
+    try:
+        with open(ref_path, "rb") as fh:
+            r = httpx.post(
+                f"{POD_RENDER_URL}/tts",
+                files={"ref_audio": (Path(ref_path).name, fh, "application/octet-stream")},
+                data={"text": text, "language": language, "fmt": fmt},
+                timeout=3600,
+            )
+        if r.status_code != 200:
+            raise RuntimeError(f"pod tts {r.status_code}: {r.text[:400]}")
+        out = DATA / "outputs" / f"{job_id}.{fmt}"
+        out.write_bytes(r.content)
+        JOBS[job_id].update(status="completed", video_key=str(out))
+    except Exception as e:  # noqa: BLE001
+        JOBS[job_id].update(status="failed", error=str(e)[:500])
+
+
+@app.post("/api/v1/tts", status_code=202)
+async def tts_job(req: dict, x_api_key: str | None = Header(None)):
+    """Audiobook-quality cloned speech: {voice_id, text, language?, format?}."""
+    _key(x_api_key)
+    text = (req.get("text") or "").strip()
+    if not text:
+        raise HTTPException(422, "text is empty")
+    fmt = req.get("format") or "mp3"
+    if fmt not in ("mp3", "wav"):
+        raise HTTPException(422, "format must be mp3 or wav")
+    vid = req.get("voice_id")
+    rec = next((v for v in VOICES if v["voice_id"] == vid), None)
+    if rec is None or not rec.get("sample_path") or not Path(rec["sample_path"]).exists():
+        raise HTTPException(422, f"voice_id {vid!r} has no stored sample — clone it first")
+    lang = req.get("language") or "en"
+
+    job_id = uuid.uuid4().hex[:16]
+    JOBS[job_id] = {"status": "queued", "progress": 0.0, "ext": fmt}
+    threading.Thread(target=_run_tts,
+                     args=(job_id, text, lang, fmt, rec["sample_path"]),
+                     daemon=True).start()
+    return {"job_id": job_id, "status": "queued", "status_url": f"/api/v1/jobs/{job_id}"}
+
+
 @app.post("/api/v1/generate-avatar-video", status_code=202)
 async def generate(req: dict, x_api_key: str | None = Header(None)):
     _key(x_api_key)
@@ -219,7 +263,8 @@ async def job_status(job_id: str, x_api_key: str | None = Header(None)):
     if not j:
         raise HTTPException(404, "job not found")
     prog = {"queued": 0.1, "rendering": 0.5, "completed": 1.0, "failed": 0.0}[j["status"]]
-    url = f"/files/{job_id}.mp4" if j["status"] == "completed" else None
+    ext = j.get("ext", "mp4")
+    url = f"/files/{job_id}.{ext}" if j["status"] == "completed" else None
     return {"job_id": job_id, "status": j["status"], "progress": prog,
             "video_url": url, "error": j.get("error")}
 
@@ -229,7 +274,8 @@ async def files(name: str):
     p = DATA / "outputs" / name
     if not p.exists():
         raise HTTPException(404, "not found")
-    return FileResponse(p, media_type="video/mp4")
+    media = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    return FileResponse(p, media_type=media)
 
 
 if __name__ == "__main__":

@@ -63,7 +63,40 @@ def _probe_clone_engine() -> None:
         CLONE_STATUS["engine"] = f"unavailable: {type(e).__name__}: {e}"[:200]
 
 
+ENHANCE_STATUS = {"engine": None}
+
+
+def _probe_enhancer() -> None:
+    try:
+        from resemble_enhance.enhancer.inference import enhance  # noqa: F401
+        ENHANCE_STATUS["engine"] = "resemble-enhance"
+    except Exception as e:  # noqa: BLE001
+        ENHANCE_STATUS["engine"] = f"unavailable: {type(e).__name__}: {e}"[:200]
+
+
 threading.Thread(target=_probe_clone_engine, daemon=True).start()
+threading.Thread(target=_probe_enhancer, daemon=True).start()
+
+
+def _enhance_audio(raw: Path, d: Path) -> Path:
+    """24 kHz cloned speech → 44.1 kHz via resemble-enhance; raw on any failure."""
+    if ENHANCE_STATUS["engine"] != "resemble-enhance":
+        return raw
+    try:
+        import torch
+        import torchaudio
+        from resemble_enhance.enhancer.inference import enhance
+
+        dwav, sr = torchaudio.load(str(raw))
+        dwav = dwav.mean(0)
+        wav, nsr = enhance(dwav, sr, "cuda", nfe=32, solver="midpoint",
+                           lambd=0.9, tau=0.5)
+        enh = d / "enhanced.wav"
+        torchaudio.save(str(enh), wav.unsqueeze(0).cpu(), nsr)
+        return enh
+    except Exception as e:  # noqa: BLE001 — enhancement is best-effort
+        print(f"[tts] enhance failed, using raw synth: {e}", flush=True)
+        return raw
 
 app = FastAPI(title="AvatarForge GPU render service")
 
@@ -115,6 +148,7 @@ def health():
         "cuda": torch.cuda.is_available(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "clone_engine": CLONE_STATUS["engine"],
+        "enhance_engine": ENHANCE_STATUS["engine"],
         "engines": engines,
     }
 
@@ -149,6 +183,52 @@ def _run_musetalk(face_path: Path, wav: Path, d: Path, out: Path) -> None:
     produced[-1].replace(out)
 
 
+@app.post("/tts")
+async def tts(
+    text: str = Form(...),
+    language: str = Form("en"),
+    fmt: str = Form("mp3"),
+    ref_audio: UploadFile = File(...),
+):
+    """Audio-only cloned speech at audiobook quality.
+
+    chatterbox 24 kHz → resemble-enhance 44.1 kHz (when installed) →
+    loudnorm to ACX levels (RMS −18..−23 dB, −3 dB peaks) → 44.1 kHz
+    mono wav, or 192 kbps CBR mp3 (the ACX upload format).
+    """
+    if fmt not in ("mp3", "wav"):
+        raise HTTPException(422, "fmt must be mp3 or wav")
+    job = uuid.uuid4().hex[:12]
+    d = WORK / job
+    d.mkdir(parents=True, exist_ok=True)
+
+    ref_suffix = Path(ref_audio.filename or "ref.wav").suffix or ".wav"
+    ref_path = d / f"ref{ref_suffix}"
+    with ref_path.open("wb") as f:
+        shutil.copyfileobj(ref_audio.file, f)
+
+    raw = d / "speech.wav"
+    try:
+        _synth_cloned(text, language, ref_path, raw)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"cloning failed: {e}")
+
+    src = _enhance_audio(raw, d)
+
+    final = d / f"audiobook.{fmt}"
+    codec = ["-c:a", "libmp3lame", "-b:a", "192k"] if fmt == "mp3" else []
+    try:
+        subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+                        "-i", str(src),
+                        "-af", "loudnorm=I=-19:TP=-3:LRA=11",
+                        "-ar", "44100", "-ac", "1", *codec, str(final)],
+                       check=True, capture_output=True, timeout=600)
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(500, f"mastering failed: {e.stderr.decode()[:400]}")
+    media = "audio/mpeg" if fmt == "mp3" else "audio/wav"
+    return FileResponse(final, media_type=media, filename=f"audiobook_{job}.{fmt}")
+
+
 @app.post("/render")
 async def render(
     face: UploadFile = File(...),
@@ -168,8 +248,11 @@ async def render(
     with face_path.open("wb") as f:
         shutil.copyfileobj(face.file, f)
 
-    # 2. speech — cloned when a reference sample came along, else edge-tts
+    # 2. speech — cloned when a reference sample came along, else edge-tts.
+    # The 16 kHz mono wav exists only for the lip-sync models' features; hq
+    # keeps the native-rate audio for the final mux.
     wav = d / "speech.wav"
+    hq: Path | None = None
     cloned = False
     if ref_audio is not None:
         ref_suffix = Path(ref_audio.filename or "ref.wav").suffix or ".wav"
@@ -182,6 +265,7 @@ async def render(
             subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
                             "-i", str(raw), "-ar", "16000", "-ac", "1", str(wav)],
                            check=True, capture_output=True, timeout=120)
+            hq = raw
             cloned = True
         except Exception as e:  # noqa: BLE001 — cloning must never kill a render
             print(f"[render {job}] cloning failed, falling back to edge-tts: {e}",
@@ -196,6 +280,7 @@ async def render(
             subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
                             "-i", str(mp3), "-ar", "16000", "-ac", "1", str(wav)],
                            check=True, capture_output=True, timeout=120)
+            hq = mp3
         except subprocess.CalledProcessError as e:
             raise HTTPException(500, f"tts failed: {e.stderr.decode()[:500]}")
 
@@ -217,4 +302,19 @@ async def render(
 
     if not out.exists():
         raise HTTPException(500, "no output produced")
+
+    # 4. remux the native-rate audio over the model's 16 kHz track
+    if hq is not None:
+        final = d / "avatar_hq.mp4"
+        try:
+            subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+                            "-i", str(out), "-i", str(hq),
+                            "-map", "0:v", "-map", "1:a",
+                            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                            "-shortest", str(final)],
+                           check=True, capture_output=True, timeout=180)
+            out = final
+        except subprocess.CalledProcessError as e:
+            print(f"[render {job}] hq remux failed, serving 16k audio: "
+                  f"{e.stderr.decode()[:300]}", flush=True)
     return FileResponse(out, media_type="video/mp4", filename=f"avatar_{job}.mp4")

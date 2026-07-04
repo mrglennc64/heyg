@@ -34,6 +34,19 @@ else
   echo "!! chatterbox install failed — cloned voices will fall back to edge-tts"
 fi
 
+echo "=== 2b. audio enhancer (resemble-enhance, audiobook /tts) ==="
+pip install -q resemble-enhance 2>&1 | tail -1 || echo "!! resemble-enhance install failed — /tts serves raw 24k"
+# transformers gets downgraded by its dep tree — re-pin (chatterbox needs it)
+pip install -q transformers==4.46.3 2>&1 | tail -1
+apt-get install -y -qq git-lfs >/dev/null 2>&1; git lfs install --skip-repo >/dev/null 2>&1
+# weights live on /workspace so pod stops don't wipe them; package expects model_repo
+RE_PKG=$(python -c 'import resemble_enhance, pathlib; print(pathlib.Path(resemble_enhance.__file__).parent)' 2>/dev/null)
+if [ -n "$RE_PKG" ]; then
+  [ -d /workspace/re_model_repo/.git ] || git clone -q https://huggingface.co/ResembleAI/resemble-enhance /workspace/re_model_repo
+  git -C /workspace/re_model_repo lfs pull >/dev/null 2>&1
+  rm -rf "$RE_PKG/model_repo" && ln -s /workspace/re_model_repo "$RE_PKG/model_repo"
+fi
+
 echo "=== 3. fetch render service ==="
 curl -fsSL https://raw.githubusercontent.com/mrglennc64/heyg/main/pod/render_service.py \
   | tr -d '\r' > /workspace/render_service.py
