@@ -11,7 +11,12 @@ VPS=46.202.143.253
 TUNNEL_PORT=18000        # VPS localhost port that maps to this pod's :8000
 
 echo "=== 1. service deps ==="
-pip install -q fastapi "uvicorn[standard]" python-multipart edge-tts 2>&1 | tail -1
+# Everything outside /workspace is wiped when the pod stops, so every boot
+# must reinstall the container-disk deps: ffmpeg + the Wav2Lip python stack
+# (same pins as prove_render.sh) + the service itself.
+command -v ffmpeg >/dev/null || apt-get install -y -qq ffmpeg >/dev/null 2>&1
+pip install -q fastapi "uvicorn[standard]" python-multipart edge-tts \
+    "numpy<2" "librosa==0.10.2" opencv-python-headless scipy numba tqdm 2>&1 | tail -1
 
 echo "=== 2. voice cloning engine (Chatterbox) ==="
 # torchvision/transformers pinned to match chatterbox's torch==2.6 — without
