@@ -33,6 +33,8 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 WAV2LIP = Path("/workspace/proof/Wav2Lip")
+MUSETALK_DIR = Path("/workspace/MuseTalk")
+MUSETALK_PY = Path("/workspace/venvs/mt/bin/python")
 WORK = Path("/workspace/renders")
 WORK.mkdir(parents=True, exist_ok=True)
 
@@ -105,12 +107,46 @@ def _synth_cloned(text: str, language: str, ref_path: Path, out_wav: Path) -> No
 @app.get("/health")
 def health():
     import torch
+    engines = ["wav2lip"]
+    if MUSETALK_PY.exists() and (MUSETALK_DIR / "models/musetalkV15/unet.pth").exists():
+        engines.append("musetalk")
     return {
         "ok": True,
         "cuda": torch.cuda.is_available(),
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "clone_engine": CLONE_STATUS["engine"],
+        "engines": engines,
     }
+
+
+def _run_wav2lip(face_path: Path, wav: Path, out: Path) -> None:
+    subprocess.run(
+        ["python", "inference.py",
+         "--checkpoint_path", "checkpoints/wav2lip_gan.pth",
+         "--face", str(face_path), "--audio", str(wav),
+         "--outfile", str(out), "--pads", "0", "15", "0", "0", "--nosmooth"],
+        check=True, capture_output=True, cwd=WAV2LIP, timeout=900,
+    )
+
+
+def _run_musetalk(face_path: Path, wav: Path, d: Path, out: Path) -> None:
+    """MuseTalk 1.5 via its own venv (torch pins differ from the service env)."""
+    cfg = d / "mt.yaml"
+    cfg.write_text(f"task_0:\n  video_path: {face_path}\n  audio_path: {wav}\n")
+    result_dir = d / "mt_out"
+    subprocess.run(
+        [str(MUSETALK_PY), "-m", "scripts.inference",
+         "--inference_config", str(cfg),
+         "--result_dir", str(result_dir),
+         "--unet_model_path", "models/musetalkV15/unet.pth",
+         "--unet_config", "models/musetalkV15/musetalk.json",
+         "--version", "v15"],
+        check=True, capture_output=True, cwd=MUSETALK_DIR, timeout=1800,
+    )
+    produced = sorted(result_dir.rglob("*.mp4"), key=lambda p: p.stat().st_mtime)
+    if not produced:
+        raise RuntimeError("musetalk produced no mp4")
+    produced[-1].replace(out)
 
 
 @app.post("/render")
@@ -119,6 +155,7 @@ async def render(
     text: str = Form(...),
     voice: str = Form("en-US-JennyNeural"),
     language: str = Form("en"),
+    engine: str = Form("wav2lip"),
     ref_audio: UploadFile | None = File(None),
 ):
     job = uuid.uuid4().hex[:12]
@@ -162,18 +199,21 @@ async def render(
         except subprocess.CalledProcessError as e:
             raise HTTPException(500, f"tts failed: {e.stderr.decode()[:500]}")
 
-    # 3. Wav2Lip lip-sync on GPU
+    # 3. lip-sync on GPU — engine-selectable (wav2lip | musetalk)
+    if engine == "musetalk" and not (MUSETALK_PY.exists()
+                                     and (MUSETALK_DIR / "models/musetalkV15/unet.pth").exists()):
+        print(f"[render {job}] musetalk requested but not installed — wav2lip fallback", flush=True)
+        engine = "wav2lip"
     out = d / "avatar.mp4"
     try:
-        subprocess.run(
-            ["python", "inference.py",
-             "--checkpoint_path", "checkpoints/wav2lip_gan.pth",
-             "--face", str(face_path), "--audio", str(wav),
-             "--outfile", str(out), "--pads", "0", "15", "0", "0", "--nosmooth"],
-            check=True, capture_output=True, cwd=WAV2LIP, timeout=900,
-        )
+        if engine == "musetalk":
+            _run_musetalk(face_path, wav, d, out)
+        else:
+            _run_wav2lip(face_path, wav, out)
     except subprocess.CalledProcessError as e:
-        raise HTTPException(500, f"render failed: {e.stderr.decode()[-800:]}")
+        raise HTTPException(500, f"render failed ({engine}): {e.stderr.decode()[-800:]}")
+    except RuntimeError as e:
+        raise HTTPException(500, f"render failed ({engine}): {e}")
 
     if not out.exists():
         raise HTTPException(500, "no output produced")

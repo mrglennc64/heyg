@@ -30,6 +30,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 POD_RENDER_URL = os.environ.get("POD_RENDER_URL", "http://127.0.0.1:18000")
+# musetalk won the 2026-07-04 A/B (sharp seam-free mouth vs wav2lip's blur
+# patch); the pod falls back to wav2lip on its own if musetalk isn't installed
+RENDER_ENGINE = os.environ.get("RENDER_ENGINE", "musetalk")
 DATA = Path(os.environ.get("DATA_DIR", "/data"))
 (DATA / "avatars").mkdir(parents=True, exist_ok=True)
 (DATA / "voices").mkdir(parents=True, exist_ok=True)
@@ -154,7 +157,8 @@ def _run_render(job_id: str, avatar_path: str, text: str, voice: str,
         r = httpx.post(
             f"{POD_RENDER_URL}/render",
             files=files,
-            data={"text": text, "voice": voice, "language": language},
+            data={"text": text, "voice": voice, "language": language,
+                  "engine": RENDER_ENGINE},
             timeout=1800,
         )
         if r.status_code != 200:
